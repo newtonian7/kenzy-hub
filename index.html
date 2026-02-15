@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTU Ghana Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://js.paystack.co/v1/inline.js"></script>
+    <script src="https://js.paystack.co/v1/inline.js"></script>
+</head>
+<body class="bg-gray-100">
+
+    <nav class="bg-blue-600 p-4 text-white">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">VTU Ghana</h1>
+            <div class="flex items-center gap-4">
+                <span>Wallet: <span id="wallet-balance" class="font-bold text-yellow-300">GHS {{ "%.2f"|format(balance) }}</span></span>
+                <a href="/logout" class="bg-red-500 px-3 py-1 rounded hover:bg-red-600 text-sm">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto mt-10 p-4 max-w-2xl">
+        
+        <div id="status-card" class="hidden mb-6 p-4 rounded-lg shadow-md">
+            <p id="status-message" class="font-bold"></p>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8 border-l-4 border-green-500">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Fund Your Wallet</h2>
+            <div class="flex gap-4">
+                <input type="number" id="amount" placeholder="Amount (e.g. 50)" class="flex-1 p-3 border rounded border-gray-300 focus:outline-none focus:border-green-500">
+                <button onclick="payWithPaystack()" class="bg-green-600 text-white font-bold py-3 px-6 rounded hover:bg-green-700 transition">
+                    Top Up
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-white p-8 rounded-lg shadow-md">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">Buy Data Bundle</h2>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Network</label>
+                    <select id="network" class="w-full p-3 border rounded bg-gray-50">
+                        <option value="MTN">MTN</option>
+                        <option value="TELECEL">Telecel</option>
+                        <option value="AT">AirtelTigo</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Phone Number</label>
+                    <input type="tel" id="phone" class="w-full p-3 border rounded bg-gray-50" placeholder="054xxxxxxx">
+                </div>
+
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Package</label>
+                    <select id="price" class="w-full p-3 border rounded bg-gray-50">
+                        <option value="3.50">1GB SME (GHS 3.50)</option>
+                        <option value="7.00">2GB SME (GHS 7.00)</option>
+                        <option value="15.00">5GB SME (GHS 15.00)</option>
+                    </select>
+                </div>
+
+                <button onclick="buyData()" class="w-full bg-blue-600 text-white font-bold py-3 rounded hover:bg-blue-700 transition duration-200">
+                    Purchase Now
+                </button>
+            </div>
+        </div>
+    </div>
+<div class="bg-white p-6 rounded-lg shadow-md mt-8">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Transaction History</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead>
+                        <tr class="text-gray-400 text-sm border-b">
+                            <th class="pb-2">Date</th>
+                            <th class="pb-2">Description</th>
+                            <th class="pb-2">Amount</th>
+                            <th class="pb-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-gray-600">
+                        {% for tx in transactions %}
+                        <tr class="border-b">
+                            <td class="py-3 text-sm">{{ tx.created_at[:10] }}</td>
+                            <td class="py-3">{{ tx.description }}</td>
+                            <td class="py-3 font-bold {% if tx.type == 'DEPOSIT' %}text-green-600{% else %}text-red-600{% endif %}">
+                                {{ "+" if tx.type == 'DEPOSIT' else "-" }} GHS {{ "%.2f"|format(tx.amount) }}
+                            </td>
+                            <td class="py-3"><span class="bg-green-100 text-green-700 px-2 py-1 rounded text-xs">Success</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+<script>
+        // --- 1. THE SUCCESS LOGIC (Moved outside to prevent errors) ---
+        function handleSuccess(response, amount) {
+            alert("Payment processed! Verifying...");
+            
+            fetch('/verify-payment', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reference: response.reference, amount: amount })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert("✅ Payment Successful! Wallet Updated.");
+                    window.location.reload(); 
+                } else {
+                    alert("❌ Verification failed: " + data.message);
+                }
+            })
+            .catch(err => alert("Server Error: " + err));
+        }
+
+        // --- 2. THE PAYMENT TRIGGER ---
+        async function payWithPaystack() {
+            const amountInput = document.getElementById('amount').value;
+            if (!amountInput) return alert("Please enter an amount!");
+            
+            const amount = parseFloat(amountInput);
+
+            try {
+                // Get the key from Python
+                const keyRes = await fetch('/get-paystack-key');
+                const keyData = await keyRes.json();
+
+                // Setup Paystack
+                let handler = PaystackPop.setup({
+                    key: keyData.key,
+                    email: "{{ session['user']['email'] }}",
+                    amount: amount * 100, // Convert GHS to Pesewas
+                    currency: 'GHS',
+                    ref: '' + Math.floor((Math.random() * 1000000000) + 1),
+                    
+                    onClose: function(){
+                        alert('Transaction cancelled.');
+                    },
+                    
+                    callback: function(response) {
+                        // Pass the work to our clean function above
+                        handleSuccess(response, amount);
+                    }
+                });
+
+                handler.openIframe();
+
+            } catch (error) {
+                console.error("Payment System Error:", error);
+                alert("Could not start payment. Check console for details.");
+            }
+        }
+
+        // --- 3. BUY DATA FUNCTION (Unchanged) ---
+        async function buyData() {
+            const btn = document.querySelector('button[onclick="buyData()"]');
+            const statusCard = document.getElementById('status-card');
+            const statusMsg = document.getElementById('status-message');
+            
+            btn.innerText = "Processing...";
+            btn.disabled = true;
+            statusCard.classList.add('hidden');
+
+            const payload = {
+                network: document.getElementById('network').value,
+                phone: document.getElementById('phone').value,
+                price: parseFloat(document.getElementById('price').value)
+            };
+
+            try {
+                const response = await fetch('/buy-data', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                
+                statusCard.classList.remove('hidden');
+                statusMsg.innerText = result.message;
+
+                if (response.ok) {
+                    statusCard.className = "mb-6 p-4 rounded-lg shadow-md bg-green-50 border-l-4 border-green-500 text-green-700";
+                    if (result.new_balance !== undefined) {
+                        document.getElementById('wallet-balance').innerText = "GHS " + result.new_balance.toFixed(2);
+                    }
+                } else {
+                    statusCard.className = "mb-6 p-4 rounded-lg shadow-md bg-red-50 border-l-4 border-red-500 text-red-700";
+                }
+
+            } catch (error) {
+                console.error(error);
+                alert("Something went wrong!");
+            }
+
+            btn.innerText = "Purchase Now";
+            btn.disabled = false;
+        }
+    </script>
+</body>
+</html>
